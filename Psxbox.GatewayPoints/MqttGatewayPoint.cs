@@ -13,7 +13,7 @@ public class MqttGatewayPoint : IGatewayPoint
     public bool IsStarted => _mqttManagedClient.IsConnected;
 
     private readonly ILogger _logger;
-    private readonly MqttManagedClient _mqttManagedClient;
+    private readonly MqttAutoReconnectClient _mqttManagedClient;
 
     #pragma warning disable CS0067
     public event Func<(string, DateTimeOffset), Task>? OnClientConnected;
@@ -24,7 +24,10 @@ public class MqttGatewayPoint : IGatewayPoint
     {
         _logger = loggerFactory.CreateLogger("MQTT CLIENT");
 
-        _mqttManagedClient = new MqttManagedClient(configuration, loggerFactory.CreateLogger<MqttManagedClient>());
+        MqttClientInfo mqttClientInfo = new();
+        configuration.Bind("MqttBroker", mqttClientInfo);
+
+        _mqttManagedClient = new (mqttClientInfo, loggerFactory.CreateLogger<MqttAutoReconnectClient>());
         _mqttManagedClient.OnConnected += OnConnected;
         _mqttManagedClient.OnDisconnected += OnDisconnected;
         _mqttManagedClient.OnMessage += OnMessage;
@@ -74,7 +77,7 @@ public class MqttGatewayPoint : IGatewayPoint
     public Task Start()
     {
         if (!_mqttManagedClient.IsConnected)
-            return _mqttManagedClient.ConnectMqttClientAsync().AsTask();
+            return _mqttManagedClient.StartAsync();
 
         return Task.CompletedTask;
     }
@@ -108,6 +111,6 @@ public class MqttGatewayPoint : IGatewayPoint
 
     public Task Stop()
     {
-        return _mqttManagedClient.DisconnectAsync();
+        return _mqttManagedClient.StopAsync();
     }
 }

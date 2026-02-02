@@ -16,12 +16,12 @@ public class MqttGatewayPoint2(IConfiguration configuration, ILoggerFactory logg
     public bool IsStarted { get; private set; } = false;
 
     public IEnumerable<string> ClientNamesList { get; set; } = [];
-    private readonly ConcurrentDictionary<string, MqttManagedClient> mqttClients = [];
+    private readonly ConcurrentDictionary<string, MqttAutoReconnectClient> mqttClients = [];
 
-    #pragma warning disable CS0067, CS0414
+#pragma warning disable CS0067, CS0414
     public event Func<(string, DateTimeOffset), Task>? OnClientConnected;
     public event Func<(string, DateTimeOffset), Task>? OnClientDisconnected;
-    #pragma warning restore CS0067, CS0414
+#pragma warning restore CS0067, CS0414
 
     public async Task SendMessageToClient(string clientName, byte[] data)
     {
@@ -65,7 +65,7 @@ public class MqttGatewayPoint2(IConfiguration configuration, ILoggerFactory logg
             Password = configuration["MqttBroker:Password"],
         };
 
-        var mqttClient = new MqttManagedClient(clientInfo, loggerFactory.CreateLogger($"MQTT CLIENT ({item})"));
+        var mqttClient = new MqttAutoReconnectClient(clientInfo, loggerFactory.CreateLogger($"MQTT CLIENT ({item})"));
         mqttClient.OnConnected += () =>
         {
             logger.LogInformation("Connected to broker");
@@ -79,9 +79,12 @@ public class MqttGatewayPoint2(IConfiguration configuration, ILoggerFactory logg
         mqttClient.OnMessage += OnMessage;
         mqttClients[item] = mqttClient;
 
-        await mqttClient.ConnectMqttClientAsync();
-        await mqttClient.SubscribeAsync(item + "/down");
-        return true;
+        await mqttClient.StartAsync();
+        if (await mqttClient.WaitForConnectedAsync(TimeSpan.FromSeconds(5)))
+        {
+            await mqttClient.SubscribeAsync(item + "/down");
+        }
+        return mqttClient.IsConnected;
     }
 
     private async Task OnMessage(string topic, byte[] data)
@@ -114,7 +117,7 @@ public class MqttGatewayPoint2(IConfiguration configuration, ILoggerFactory logg
             if (client.IsConnected)
             {
                 await client.UnsubscribeAsync(item + "/down");
-                await client.DisconnectAsync();
+                await client.StopAsync();
             }
             client.OnMessage -= OnMessage;
             client.Dispose();
