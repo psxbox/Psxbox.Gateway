@@ -13,8 +13,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Psxbox.MQTTClient\Psxbox.MQTTClient.csproj" />
-    <ProjectReference Include="..\Psxbox.Utils\Psxbox.Utils.csproj" />
+    <ProjectReference Include="..\..\Psxbox.MQTTClient\Psxbox.MQTTClient.csproj" />
+    <ProjectReference Include="..\..\Psxbox.Utils\Psxbox.Utils.csproj" />
   </ItemGroup>
 
 </Project>
