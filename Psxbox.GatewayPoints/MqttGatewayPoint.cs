@@ -24,8 +24,7 @@ public class MqttGatewayPoint : IGatewayPoint
     {
         _logger = loggerFactory.CreateLogger("MQTT CLIENT");
 
-        MqttClientInfo mqttClientInfo = new();
-        configuration.Bind("MqttBroker", mqttClientInfo);
+        MqttClientInfo mqttClientInfo = configuration.GetSection("MqttBroker").Get<MqttClientInfo>();
 
         _mqttManagedClient = new (mqttClientInfo, loggerFactory.CreateLogger<MqttAutoReconnectClient>());
         _mqttManagedClient.OnConnected += OnConnected;
