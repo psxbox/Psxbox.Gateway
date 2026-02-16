@@ -51,10 +51,11 @@ public class MqttGatewayPoint : IGatewayPoint
         return Task.CompletedTask;
     }
 
-    private Task OnConnected()
+    private async Task OnConnected()
     {
         _logger.LogInformation("Client is connected to broker");
-        return Subscribe();
+        await Task.Delay(1000);
+        await Subscribe();
     }
 
     public void Dispose()
