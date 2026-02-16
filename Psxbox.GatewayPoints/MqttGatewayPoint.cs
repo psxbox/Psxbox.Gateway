@@ -14,6 +14,7 @@ public class MqttGatewayPoint : IGatewayPoint
 
     private readonly ILogger _logger;
     private readonly MqttAutoReconnectClient _mqttManagedClient;
+    private bool _disposed;
 
     #pragma warning disable CS0067
     public event Func<(string, DateTimeOffset), Task>? OnClientConnected;
@@ -60,6 +61,12 @@ public class MqttGatewayPoint : IGatewayPoint
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
+        _mqttManagedClient.OnConnected -= OnConnected;
+        _mqttManagedClient.OnDisconnected -= OnDisconnected;
+        _mqttManagedClient.OnMessage -= OnMessage;
         _mqttManagedClient.Dispose();
         GC.SuppressFinalize(this);
     }
