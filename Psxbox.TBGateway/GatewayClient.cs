@@ -155,11 +155,7 @@ public partial class GatewayClient : IDisposable
 
     public Task SendTelemetryAsync(string payload, bool enqueue = false)
     {
-        if (enqueue)
-        {
-            return EnqueueAsync(GATEWAY_DEVICE_TELEMETRY_TOPIC, payload);
-        }
-        return _mqttClient.PublishAsync(GATEWAY_DEVICE_TELEMETRY_TOPIC, payload);
+        return SendWithFallbackAsync(GATEWAY_DEVICE_TELEMETRY_TOPIC, payload, enqueue);
     }
 
     public Task SendTelemetryAsync(string deviceName, List<object> data, bool enqueue = false)
@@ -179,11 +175,7 @@ public partial class GatewayClient : IDisposable
 
     public Task SendAttributesAsync(string payload, bool enqueue = false)
     {
-        if (enqueue)
-        {
-            return EnqueueAsync(GATEWAY_DEVICE_ATTRIBUTES_TOPIC, payload);
-        }
-        return _mqttClient.PublishAsync(GATEWAY_DEVICE_ATTRIBUTES_TOPIC, payload);
+        return SendWithFallbackAsync(GATEWAY_DEVICE_ATTRIBUTES_TOPIC, payload, enqueue);
     }
 
     public Task SendAttributesAsync(string deviceName, object data, bool enqueue = false)
@@ -204,6 +196,31 @@ public partial class GatewayClient : IDisposable
             [$"{attributeKey}"] = value
         };
         return SendAttributesAsync(deviceName, payload, enqueue);
+    }
+
+    private async Task SendWithFallbackAsync(string topic, string payload, bool enqueue)
+    {
+        if (!enqueue)
+        {
+            await _mqttClient.PublishAsync(topic, payload).ConfigureAwait(false);
+            return;
+        }
+
+        if (!_mqttClient.IsConnected || _mqttClient.PendingCount > 0)
+        {
+            await EnqueueAsync(topic, payload).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await _mqttClient.PublishAsync(topic, payload).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Direct publish failed for topic {topic}, message queued", topic);
+            await EnqueueAsync(topic, payload).ConfigureAwait(false);
+        }
     }
 
     public Task<bool> WaitForConnect(int timeOut)
