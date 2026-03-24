@@ -206,7 +206,8 @@ public partial class GatewayClient : IDisposable
             return;
         }
 
-        if (!_mqttClient.IsConnected || _mqttClient.PendingCount > 0)
+        // Faqat disconnect holatda enqueue — PendingCount kaskadini oldini olish
+        if (!_mqttClient.IsConnected)
         {
             await EnqueueAsync(topic, payload).ConfigureAwait(false);
             return;
