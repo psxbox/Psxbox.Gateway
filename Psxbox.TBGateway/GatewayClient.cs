@@ -34,6 +34,8 @@ public partial class GatewayClient : IDisposable
     public GatewayInfo GatewayInfo { get; private set; }
 
     private readonly ConcurrentDictionary<int, AttributeResponse> attributeResponses = new();
+    private readonly ConcurrentDictionary<string, byte> _connectedDevices = new();
+    private readonly SemaphoreSlim _publishThrottle;
     private readonly object idLock = new();
     private int _attributeRequestId = 0;
     private bool disposedValue;
@@ -54,6 +56,7 @@ public partial class GatewayClient : IDisposable
     {
         GatewayInfo = gateway;
         _logger = logger;
+        _publishThrottle = new SemaphoreSlim(gateway.MaxConcurrentPublish, gateway.MaxConcurrentPublish);
         _mqttClientInfo = GetClientInfo();
         _mqttClient = new MqttAutoReconnectClient(_mqttClientInfo, logger);
         _mqttClient.OnMessage += MqttClientOnMessageAsync;
@@ -64,6 +67,7 @@ public partial class GatewayClient : IDisposable
     private async Task MqttClientOnDisconnectedAsync()
     {
         IsConnected = false;
+        _connectedDevices.Clear();
         await Task.CompletedTask;
     }
 
@@ -143,6 +147,15 @@ public partial class GatewayClient : IDisposable
         return _mqttClient.PublishAsync(GATEWAY_DEVICE_CONNECT_TOPIC, JsonSerializer.Serialize(payload));
     }
 
+    public async Task ConnectDeviceIfNeededAsync(string deviceId, string deviceType)
+    {
+        if (_connectedDevices.ContainsKey(deviceId))
+            return;
+
+        await ConnectDeviceAsync(deviceId, deviceType);
+        _connectedDevices.TryAdd(deviceId, 0);
+    }
+
     public Task DisconnectDeviceAsync(string deviceId)
     {
         var payload = new
@@ -202,7 +215,15 @@ public partial class GatewayClient : IDisposable
     {
         if (!enqueue)
         {
-            await _mqttClient.PublishAsync(topic, payload).ConfigureAwait(false);
+            await _publishThrottle.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await _mqttClient.PublishAsync(topic, payload).ConfigureAwait(false);
+            }
+            finally
+            {
+                _publishThrottle.Release();
+            }
             return;
         }
 
@@ -213,6 +234,7 @@ public partial class GatewayClient : IDisposable
             return;
         }
 
+        await _publishThrottle.WaitAsync().ConfigureAwait(false);
         try
         {
             await _mqttClient.PublishAsync(topic, payload).ConfigureAwait(false);
@@ -221,6 +243,10 @@ public partial class GatewayClient : IDisposable
         {
             _logger?.LogWarning(ex, "Direct publish failed for topic {topic}, message queued", topic);
             await EnqueueAsync(topic, payload).ConfigureAwait(false);
+        }
+        finally
+        {
+            _publishThrottle.Release();
         }
     }
 
