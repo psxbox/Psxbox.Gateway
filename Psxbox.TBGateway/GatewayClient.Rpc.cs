@@ -90,10 +90,12 @@ public partial class GatewayClient
                     await OnForceRead(deviceName, archType, data["params"]!);
                     message = "So`rov qabul qilindi. Birozdan so`ng ma'lumotlar o`qib jo`natiladi";
                     break;
+                case "READ_DEVICE" when OnReadData != null:
                 case "READ_DATA" when OnReadData != null:
                     resultData = await OnReadData(deviceName, data["params"]!);
                     message = "So`rov qabul qilindi. Birozdan so`ng ma'lumotlar o`qib jo`natiladi";
                     break;
+                case "WRITE_DEVICE" when OnWriteData != null:
                 case "WRITE_DATA" when OnWriteData != null:
                     resultData = await OnWriteData(deviceName, data["params"]!);
                     message = "So`rov qabul qilindi.";
