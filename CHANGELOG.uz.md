@@ -1,5 +1,15 @@
 # O'zgarishlar Tarixi
 
+## [1.0.1] - 2026-05-21
+
+### 🔄 O'zgartirildi
+
+- `Psxbox.GatewayPoints` va `Psxbox.TBGateway` loyihalarida `Microsoft.Extensions.Configuration` hamda `Microsoft.Extensions.Logging` paketlari `10.0.8` versiyasiga yangilandi
+- Repositoryda kesh fayllarni boshqarish uchun `.gitignore` ga `*.lscache` qoidasi qo'shildi
+- `GatewayClient` ichida `READ_DEVICE` va `WRITE_DEVICE` buyruqlari qo'llab-quvvatlandi
+
+---
+
 ## [1.0.0] - 2026-04-22
 
 ### ✨ Qo'shildi
