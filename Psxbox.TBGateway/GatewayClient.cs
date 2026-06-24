@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using Psxbox.MQTTClient;
 using Psxbox.Utils;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Text.Json;
 
 namespace Psxbox.TBGateway;
@@ -33,10 +32,9 @@ public partial class GatewayClient : IDisposable
 
     public GatewayInfo GatewayInfo { get; private set; }
 
-    private readonly ConcurrentDictionary<int, AttributeResponse> attributeResponses = new();
+    private readonly ConcurrentDictionary<int, TaskCompletionSource<AttributeResponse>> attributeResponses = new();
     private readonly ConcurrentDictionary<string, byte> _connectedDevices = new();
     private readonly SemaphoreSlim _publishThrottle;
-    private readonly object idLock = new();
     private int _attributeRequestId = 0;
     private bool disposedValue;
 
@@ -260,6 +258,9 @@ public partial class GatewayClient : IDisposable
     {
         var requestId = GetNextRequestId();
 
+        var tcs = new TaskCompletionSource<AttributeResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        attributeResponses[requestId] = tcs;
+
         var payload = new
         {
             id = requestId,
@@ -288,58 +289,52 @@ public partial class GatewayClient : IDisposable
 
     private async ValueTask<T?> WaitForAttributeResponse<T>(string deviceName, int requestId, int timeOut)
     {
-        Stopwatch stopwatch = new();
-        stopwatch.Start();
-        while (true)
+        if (!attributeResponses.TryRemove(requestId, out var tcs))
         {
-            await Task.Yield();
+            throw new Exception($"Attribute response waiter not found. RequestId: {requestId}");
+        }
 
-            if (attributeResponses.TryRemove(requestId, out var response))
+        AttributeResponse response;
+        try
+        {
+            response = await tcs.Task.WaitAsync(TimeSpan.FromMilliseconds(timeOut)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            throw new Exception($"Attribute response timeout. RequestId: {requestId}");
+        }
+
+        if (response.Device == deviceName)
+        {
+            T? value = default;
+
+            if (response.Value.ValueKind != JsonValueKind.Undefined &&
+                response.Value.ValueKind != JsonValueKind.Null)
             {
-                if (response.Device == deviceName)
+                if (typeof(T) == typeof(string))
                 {
-                    T? value = default;
-
-                    if (response.Value.ValueKind != JsonValueKind.Undefined &&
-                        response.Value.ValueKind != JsonValueKind.Null)
-                    {
-                        if (typeof(T) == typeof(string))
-                        {
-                            value = Converters.ConvertTo<T>(response.Value.ValueKind == JsonValueKind.String
-                                ? response.Value.GetString()
-                                : response.Value.GetRawText());
-                        }
-                        else
-                        {
-                            value = response.Value.Deserialize<T>();
-                        }
-                    }
-
-                    return value;
+                    value = Converters.ConvertTo<T>(response.Value.ValueKind == JsonValueKind.String
+                        ? response.Value.GetString()
+                        : response.Value.GetRawText());
                 }
                 else
                 {
-                    throw new Exception(
-                        $"Attribute response device name mismatch. Expected: {deviceName}, Actual: {response.Device}");
+                    value = response.Value.Deserialize<T>();
                 }
             }
 
-            if (stopwatch.ElapsedMilliseconds > timeOut)
-            {
-                throw new Exception($"Attribute response timeout. RequestId: {requestId}");
-            }
-
-            await Task.Delay(100);
+            return value;
+        }
+        else
+        {
+            throw new Exception(
+                $"Attribute response device name mismatch. Expected: {deviceName}, Actual: {response.Device}");
         }
     }
 
     private int GetNextRequestId()
     {
-        lock (idLock)
-        {
-            Interlocked.Increment(ref _attributeRequestId);
-            return _attributeRequestId;
-        }
+        return Interlocked.Increment(ref _attributeRequestId);
     }
 
     protected virtual void Dispose(bool disposing)

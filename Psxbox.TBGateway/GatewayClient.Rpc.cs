@@ -134,17 +134,21 @@ public partial class GatewayClient
         }
     }
 
+    private static readonly JsonSerializerOptions AttributeResponseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
     private Task AttributesResponseHandlerAsync(byte[] msg)
     {
-        var response = JsonSerializer.Deserialize<AttributeResponse>(msg, new JsonSerializerOptions()
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true
-        });
+        var response = JsonSerializer.Deserialize<AttributeResponse>(msg, AttributeResponseJsonOptions);
 
         if (response == null) return Task.CompletedTask;
 
-        attributeResponses.AddOrUpdate(response.Id, response, (key, value) => response);
+        if (attributeResponses.TryRemove(response.Id, out var tcs))
+            tcs.TrySetResult(response);
+
         return Task.CompletedTask;
     }
     
