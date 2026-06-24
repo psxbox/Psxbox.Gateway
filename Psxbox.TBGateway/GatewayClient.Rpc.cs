@@ -146,7 +146,7 @@ public partial class GatewayClient
 
         if (response == null) return Task.CompletedTask;
 
-        if (attributeResponses.TryRemove(response.Id, out var tcs))
+        if (attributeResponses.TryGetValue(response.Id, out var tcs))
             tcs.TrySetResult(response);
 
         return Task.CompletedTask;

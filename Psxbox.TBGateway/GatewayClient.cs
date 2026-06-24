@@ -289,9 +289,9 @@ public partial class GatewayClient : IDisposable
 
     private async ValueTask<T?> WaitForAttributeResponse<T>(string deviceName, int requestId, int timeOut)
     {
-        if (!attributeResponses.TryRemove(requestId, out var tcs))
+        if (!attributeResponses.TryGetValue(requestId, out var tcs))
         {
-            throw new Exception($"Attribute response waiter not found. RequestId: {requestId}");
+            throw new Exception($"No pending attribute request found. RequestId: {requestId}");
         }
 
         AttributeResponse response;
@@ -301,35 +301,36 @@ public partial class GatewayClient : IDisposable
         }
         catch (TimeoutException)
         {
+            attributeResponses.TryRemove(requestId, out _);
             throw new Exception($"Attribute response timeout. RequestId: {requestId}");
         }
 
-        if (response.Device == deviceName)
-        {
-            T? value = default;
+        attributeResponses.TryRemove(requestId, out _);
 
-            if (response.Value.ValueKind != JsonValueKind.Undefined &&
-                response.Value.ValueKind != JsonValueKind.Null)
-            {
-                if (typeof(T) == typeof(string))
-                {
-                    value = Converters.ConvertTo<T>(response.Value.ValueKind == JsonValueKind.String
-                        ? response.Value.GetString()
-                        : response.Value.GetRawText());
-                }
-                else
-                {
-                    value = response.Value.Deserialize<T>();
-                }
-            }
-
-            return value;
-        }
-        else
+        if (response.Device != deviceName)
         {
             throw new Exception(
                 $"Attribute response device name mismatch. Expected: {deviceName}, Actual: {response.Device}");
         }
+
+        T? value = default;
+
+        if (response.Value.ValueKind != JsonValueKind.Undefined &&
+            response.Value.ValueKind != JsonValueKind.Null)
+        {
+            if (typeof(T) == typeof(string))
+            {
+                value = Converters.ConvertTo<T>(response.Value.ValueKind == JsonValueKind.String
+                    ? response.Value.GetString()
+                    : response.Value.GetRawText());
+            }
+            else
+            {
+                value = response.Value.Deserialize<T>();
+            }
+        }
+
+        return value;
     }
 
     private int GetNextRequestId()
@@ -351,6 +352,9 @@ public partial class GatewayClient : IDisposable
                 OnRenameDevice = null;
                 OnSetDeviceInfo = null;
                 OnSetEnabled = null;
+
+                foreach (var kvp in attributeResponses)
+                    kvp.Value.TrySetCanceled();
 
                 attributeResponses.Clear();
                 _mqttClient.Dispose();
