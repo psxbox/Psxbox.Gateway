@@ -269,7 +269,15 @@ public partial class GatewayClient : IDisposable
             key = attributeKey
         };
 
-        await _mqttClient.PublishAsync(GATEWAY_DEVICE_ATTRIBUTES_REQUEST_TOPIC, JsonSerializer.Serialize(payload));
+        try
+        {
+            await _mqttClient.PublishAsync(GATEWAY_DEVICE_ATTRIBUTES_REQUEST_TOPIC, JsonSerializer.Serialize(payload));
+        }
+        catch
+        {
+            attributeResponses.TryRemove(requestId, out _);
+            throw;
+        }
 
         return await WaitForAttributeResponse<T>(deviceName, requestId, timeOut: ATTRIBUTE_REQUEST_TIMEOUT);
     }
