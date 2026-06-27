@@ -24,7 +24,7 @@ public partial class GatewayClient : IDisposable
     public const int ATTRIBUTE_REQUEST_TIMEOUT = 7000;
 
     private readonly MqttClientInfo _mqttClientInfo;
-    private MqttAutoReconnectClient _mqttClient;
+    private IMqttReconnectClient _mqttClient;
     private readonly ILogger? _logger;
     public event Action<string, byte[]>? OnMessage;
 
@@ -61,6 +61,20 @@ public partial class GatewayClient : IDisposable
         _mqttClient.OnConnected += MqttClientOnConnectedAsync;
         _mqttClient.OnDisconnected += MqttClientOnDisconnectedAsync;
     }
+
+    internal GatewayClient(GatewayInfo gateway, IMqttReconnectClient mqttClient, ILogger? logger = null)
+    {
+        GatewayInfo = gateway;
+        _logger = logger;
+        _publishThrottle = new SemaphoreSlim(gateway.MaxConcurrentPublish, gateway.MaxConcurrentPublish);
+        _mqttClientInfo = GetClientInfo();
+        _mqttClient = mqttClient;
+        _mqttClient.OnMessage += MqttClientOnMessageAsync;
+        _mqttClient.OnConnected += MqttClientOnConnectedAsync;
+        _mqttClient.OnDisconnected += MqttClientOnDisconnectedAsync;
+    }
+
+    internal int AttributeRequestTimeout { get; set; } = ATTRIBUTE_REQUEST_TIMEOUT;
 
     private async Task MqttClientOnDisconnectedAsync()
     {
@@ -126,7 +140,7 @@ public partial class GatewayClient : IDisposable
         }
 
         _mqttClient.Dispose();
-        _mqttClient = new(_mqttClientInfo);
+        _mqttClient = new MqttAutoReconnectClient(_mqttClientInfo);
     }
 
     public Task UnsubscribeAsync(string topic)
@@ -279,7 +293,7 @@ public partial class GatewayClient : IDisposable
             throw;
         }
 
-        return await WaitForAttributeResponse<T>(deviceName, requestId, timeOut: ATTRIBUTE_REQUEST_TIMEOUT);
+        return await WaitForAttributeResponse<T>(deviceName, requestId, timeOut: AttributeRequestTimeout);
     }
 
     public async ValueTask<T?> GetAttribute<T>(string deviceName, string attributeKey, bool client = true)
