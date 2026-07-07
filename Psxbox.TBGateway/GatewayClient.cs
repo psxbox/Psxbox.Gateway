@@ -156,7 +156,7 @@ public partial class GatewayClient : IDisposable
             type = deviceType,
         };
 
-        return _mqttClient.PublishAsync(GATEWAY_DEVICE_CONNECT_TOPIC, JsonSerializer.Serialize(payload));
+        return SendWithFallbackAsync(GATEWAY_DEVICE_CONNECT_TOPIC, JsonSerializer.Serialize(payload), enqueue: true);
     }
 
     public async Task ConnectDeviceIfNeededAsync(string deviceId, string deviceType)
@@ -175,7 +175,7 @@ public partial class GatewayClient : IDisposable
             device = deviceId,
         };
 
-        return _mqttClient.PublishAsync(GATEWAY_DEVICE_DISCONNECT_TOPIC, JsonSerializer.Serialize(payload));
+        return SendWithFallbackAsync(GATEWAY_DEVICE_DISCONNECT_TOPIC, JsonSerializer.Serialize(payload), enqueue: true);
     }
 
     public Task SendTelemetryAsync(string payload, bool enqueue = false)
