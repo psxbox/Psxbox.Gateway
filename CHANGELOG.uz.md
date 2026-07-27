@@ -1,5 +1,27 @@
 # O'zgarishlar Tarixi
 
+## [1.1.0] - 2026-07-27
+
+### ✨ Qo'shildi
+
+- `GatewayClient` testable qilindi: `IMqttReconnectClient` injection orqali
+
+### 🐛 Tuzatildi
+
+- `ConnectDeviceAsync`/`DisconnectDeviceAsync` enqueue fallback orqali yo'naltirildi
+- MQTT publish xatoligida `attributeResponses` dan orphaned TCS olib tashlandi
+- `WaitForAttributeResponse` dagi TCS race condition tuzatildi
+
+### 🚀 Optimallashtirildi
+
+- Busy-wait polling o'rniga TCS ishlatildi, `JsonSerializerOptions` ko'tarildi, redundant lock olib tashlandi
+
+### 🔄 O'zgartirildi
+
+- Paket referenslari eng so'nggi versiyalarga yangilandi
+
+---
+
 ## [1.0.1] - 2026-05-21
 
 ### 🔄 O'zgartirildi
