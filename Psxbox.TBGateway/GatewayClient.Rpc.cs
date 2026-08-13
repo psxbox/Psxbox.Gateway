@@ -7,9 +7,9 @@ namespace Psxbox.TBGateway;
 public partial class GatewayClient
 {
     /// <summary>
-    /// New device event with (device name, client id, device id)
+    /// New device event with (device name, raw params)
     /// </summary>
-    public event Func<string, string, int?, Task>? OnNewDevice;
+    public event Func<string, JsonNode, Task>? OnNewDevice;
 
     /// <summary>
     /// Rename device event with (old device name, new device name)
@@ -171,8 +171,8 @@ public partial class GatewayClient
         string message;
         try
         {
-            string? deviceName = node["params"]?["deviceName"]?.GetValue<string>();
-            JsonNode? settings = node["params"]?["settings"];
+            var deviceName = node["params"]?["deviceName"] ?? node["params"]?["name"]?.GetValue<string>();
+            var settings = node["params"]?["settings"];
             switch (method)
             {
                 case "STATUS_GATEWAY":
@@ -192,12 +192,12 @@ public partial class GatewayClient
                     break;
                 case "READ_DEVICE" when OnReadData != null:
                     _ = await OnReadData(
-                        deviceName ?? throw new NullReferenceException("deviceName berilamagan"),
+                        deviceName?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
                         settings ?? throw new NullReferenceException("settings berilmagan"));
                     break;
                 case "WRITE_DEVICE" when OnWriteData != null:
                     _ = await OnWriteData(
-                        deviceName ?? throw new NullReferenceException("deviceName berilamagan"),
+                        deviceName?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
                         settings ?? throw new NullReferenceException("settings berilmagan"));
                     break;
                 default:
@@ -229,23 +229,21 @@ public partial class GatewayClient
 
     private Task NewDeviceHandler(JsonNode node)
     {
-        var param = node!["params"] ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param!["name"] ?? throw new Exception("Qurilma nomi berilmagan");
-        var clientId = param!["clientId"] ?? throw new Exception("clientId berilmagan");
-        var deviceId = param!["deviceId"]?.GetValue<int>();
+        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var deviceName = param["deviceName"] ?? param["name"] ?? throw new Exception("Qurilma nomi berilmagan");
 
         if (OnNewDevice != null)
         {
-            return OnNewDevice(deviceName.GetValue<string>(), clientId.GetValue<string>(), deviceId);
+            return OnNewDevice(deviceName.GetValue<string>(), param);
         }
         return Task.CompletedTask;
     }
 
     private Task ControlDeviceHandler(JsonNode node)
     {
-        var param = node!["params"] ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param!["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
-        var enabled = param!["enabled"]?.GetValue<bool>() ?? throw new Exception("'enabled' parametri berilmagan");
+        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
+        var enabled = param["enabled"]?.GetValue<bool>() ?? throw new Exception("'enabled' parametri berilmagan");
 
         if (OnSetEnabled != null)
         {
@@ -256,9 +254,9 @@ public partial class GatewayClient
 
     private Task RenameDeviceHandler(JsonNode node)
     {
-        var param = node!["params"] ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param!["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
-        var newName = param!["newName"]?.GetValue<string>() ?? throw new Exception("Yangi nom berilmagan");
+        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
+        var newName = param["newName"]?.GetValue<string>() ?? throw new Exception("Yangi nom berilmagan");
         if (OnRenameDevice != null)
         {
             return OnRenameDevice(deviceName, newName);
@@ -269,7 +267,7 @@ public partial class GatewayClient
     private Task DeleteDeviceHandler(JsonNode node)
     {
         var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param!["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
+        var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
         if (OnDeleteDevice != null)
         {
             return OnDeleteDevice(deviceName);
