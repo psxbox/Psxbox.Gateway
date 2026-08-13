@@ -7,9 +7,10 @@ namespace Psxbox.TBGateway;
 public partial class GatewayClient
 {
     /// <summary>
-    /// New device event with (device name, raw params)
+    /// New device event with (gateway client, device name, raw params).
+    /// Handler qaytargan string RPC javob message sifatida TB ga boradi; null = default muvaffaqiyat xabari.
     /// </summary>
-    public event Func<string, JsonNode, Task>? OnNewDevice;
+    public event Func<GatewayClient, string, JsonNode, Task<string?>>? OnNewDevice;
 
     /// <summary>
     /// Rename device event with (old device name, new device name)
@@ -169,6 +170,7 @@ public partial class GatewayClient
 
         var method = node!["method"]?.GetValue<string>().ToUpper();
         string message;
+        string? customMessage = null;
         try
         {
             var deviceName = node["params"]?["deviceName"] ?? node["params"]?["name"]?.GetValue<string>();
@@ -179,7 +181,7 @@ public partial class GatewayClient
                     await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(GatewayInfo));
                     break;
                 case "NEW_DEVICE" when OnNewDevice != null:
-                    await NewDeviceHandler(node);
+                    customMessage = await NewDeviceHandler(node);
                     break;
                 case "CONTROL_DEVICE" when OnSetEnabled != null:
                     await ControlDeviceHandler(node);
@@ -204,7 +206,7 @@ public partial class GatewayClient
                     return;
             }
 
-            message = "So`rovingiz muvaffaqiyatli bajarildi";
+            message = customMessage ?? "So`rovingiz muvaffaqiyatli bajarildi";
 
             var res = new
             {
@@ -227,16 +229,16 @@ public partial class GatewayClient
         }
     }
 
-    private Task NewDeviceHandler(JsonNode node)
+    private Task<string?> NewDeviceHandler(JsonNode node)
     {
         var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
         var deviceName = param["deviceName"] ?? param["name"] ?? throw new Exception("Qurilma nomi berilmagan");
 
         if (OnNewDevice != null)
         {
-            return OnNewDevice(deviceName.GetValue<string>(), param);
+            return OnNewDevice(this, deviceName.GetValue<string>(), param);
         }
-        return Task.CompletedTask;
+        return Task.FromResult<string?>(null);
     }
 
     private Task ControlDeviceHandler(JsonNode node)
