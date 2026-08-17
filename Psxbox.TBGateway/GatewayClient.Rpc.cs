@@ -173,17 +173,27 @@ public partial class GatewayClient
         string? customMessage = null;
         try
         {
-            var deviceName = node["params"]?["deviceName"] ?? node["params"]?["name"]?.GetValue<string>();
-            var settings = node["params"]?["settings"];
+            // "as JsonObject": ThingsBoard ba'zi ichki RPC so'rovlarida (masalan, gateway_ping)
+            // "params" ni JSON obyekt emas, satr sifatida jo'natadi ("params":"{}"). Node
+            // indekseri ([...]) bunday holatda AsObject() ichida yiqiladi, shuning uchun
+            // xavfsiz cast ishlatiladi — mos kelmasa shunchaki null qaytadi.
+            var paramsObj = node["params"] as JsonObject;
             switch (method)
             {
+                case "GATEWAY_PING":
+                    await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(new {success = true, message = "pong" }));
+                    break;
                 case "STATUS_GATEWAY":
+                case "GATEWAY_STATS":
                     await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(GatewayInfo));
+                    break;
+                case "GATEWAY_VERSION":
+                    await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(new { version = GatewayVersion() }));
                     break;
                 case "NEW_DEVICE" when OnNewDevice != null:
                     customMessage = await NewDeviceHandler(node);
                     break;
-                case "CONTROL_DEVICE" when OnSetEnabled != null:
+                case "ENABLE_DEVICE" when OnSetEnabled != null:
                     await ControlDeviceHandler(node);
                     break;
                 case "RENAME_DEVICE" when OnRenameDevice != null:
@@ -194,13 +204,13 @@ public partial class GatewayClient
                     break;
                 case "READ_DEVICE" when OnReadData != null:
                     _ = await OnReadData(
-                        deviceName?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
-                        settings ?? throw new NullReferenceException("settings berilmagan"));
+                        paramsObj?["deviceName"]?.GetValue<string>() ?? paramsObj?["name"]?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
+                        paramsObj?["settings"] ?? throw new NullReferenceException("settings berilmagan"));
                     break;
                 case "WRITE_DEVICE" when OnWriteData != null:
                     _ = await OnWriteData(
-                        deviceName?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
-                        settings ?? throw new NullReferenceException("settings berilmagan"));
+                        paramsObj?["deviceName"]?.GetValue<string>() ?? paramsObj?["name"]?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
+                        paramsObj?["settings"] ?? throw new NullReferenceException("settings berilmagan"));
                     break;
                 default:
                     return;
@@ -229,9 +239,18 @@ public partial class GatewayClient
         }
     }
 
+    private string GatewayVersion()
+    {
+        var assembly = typeof(GatewayClient).Assembly;
+        var versionAttribute = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                                       .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+                                       .FirstOrDefault();
+        return versionAttribute?.InformationalVersion ?? "unknown";
+    }
+
     private Task<string?> NewDeviceHandler(JsonNode node)
     {
-        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
         var deviceName = param["deviceName"] ?? param["name"] ?? throw new Exception("Qurilma nomi berilmagan");
 
         if (OnNewDevice != null)
@@ -243,7 +262,7 @@ public partial class GatewayClient
 
     private Task ControlDeviceHandler(JsonNode node)
     {
-        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
         var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
         var enabled = param["enabled"]?.GetValue<bool>() ?? throw new Exception("'enabled' parametri berilmagan");
 
@@ -256,7 +275,7 @@ public partial class GatewayClient
 
     private Task RenameDeviceHandler(JsonNode node)
     {
-        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
         var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
         var newName = param["newName"]?.GetValue<string>() ?? throw new Exception("Yangi nom berilmagan");
         if (OnRenameDevice != null)
@@ -268,7 +287,7 @@ public partial class GatewayClient
 
     private Task DeleteDeviceHandler(JsonNode node)
     {
-        var param = node["params"] ?? throw new Exception("Parametrlar berilmadi");
+        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
         var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
         if (OnDeleteDevice != null)
         {
