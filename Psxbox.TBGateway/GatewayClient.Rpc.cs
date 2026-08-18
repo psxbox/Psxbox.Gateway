@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -13,14 +13,16 @@ public partial class GatewayClient
     public event Func<GatewayClient, string, JsonNode, Task<string?>>? OnNewDevice;
 
     /// <summary>
-    /// Rename device event with (old device name, new device name)
+    /// Rename device event with (old device name, new device name).
+    /// Handler qaytargan string RPC javob message sifatida TB ga boradi; null = default xabar.
     /// </summary>
-    public event Func<string, string, Task>? OnRenameDevice;
+    public event Func<string, string, Task<string?>>? OnRenameDevice;
 
     /// <summary>
-    /// Delete device event with (device name)
+    /// Delete device event with (device name).
+    /// Handler qaytargan string RPC javob message sifatida TB ga boradi; null = default xabar.
     /// </summary>
-    public event Func<string, Task>? OnDeleteDevice;
+    public event Func<string, Task<string?>>? OnDeleteDevice;
 
     /// <summary>
     /// Set enabled/disabled event with (device name, enabled)
@@ -48,15 +50,20 @@ public partial class GatewayClient
     public event Func<string, Task<Dictionary<string, object>>>? OnGetDeviceInfo;
 
     /// <summary>
-    /// Set device config event with (device name, device data)
+    /// Set device config event with (device name, device data).
+    /// Handler qaytargan string RPC javob message sifatida TB ga boradi; null = default xabar.
     /// </summary>
-    public event Func<string, object, Task>? OnSetDeviceInfo;
+    public event Func<string, object, Task<string?>>? OnSetDeviceInfo;
 
+    /// <summary>
+    /// v1/gateway/rpc — TB'da tanlangan bola qurilmaga yo'naltirilgan RPC.
+    /// Bu yo'l faqat qurilma TB'da active bo'lganda yetadi.
+    /// </summary>
     private async Task GatewayRpcHandlerAsync(string topic, byte[] msg)
     {
         var content = JsonNode.Parse(msg);
-        var data = content?["data"];
-        if (content == null || data == null)
+        var data = content?["data"] as JsonObject;
+        if (content is null || data is null)
         {
             _logger?.LogWarning("Received null or empty content for topic: {Topic}", topic);
             return;
@@ -64,75 +71,18 @@ public partial class GatewayClient
 
         _logger?.LogInformation("GATEWAY DEVICE RPC -> Topic: {Topic}, Message: {Msg}", topic, content.ToJsonString());
 
-        var method = data["method"]?.GetValue<string>()?.ToUpper();
-
-        var deviceName = content["device"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
-        var requestId = data["id"]?.GetValue<int>() ?? throw new Exception("id berilmagan");
-        var archType = data["params"]?["arch_type"]?.GetValue<string?>()?.ToUpper();
-
-        bool success = true;
-        string message = string.Empty;
-        var result = new Dictionary<string, object>();
-        object? resultData = null;
-
-        try
+        var request = new RpcRequest
         {
-            switch (method)
-            {
-                case "GET_DEVICE_INFO" when OnGetDeviceInfo != null:
-                    result = await OnGetDeviceInfo(deviceName);
-                    break;
-                case "SET_DEVICE_INFO" when OnSetDeviceInfo != null:
-                    await OnSetDeviceInfo(deviceName, data["params"]!);
-                    message = "Ma'lumotlar o'zgartirildi";
-                    break;
-                case "FORCE_READ" when OnForceRead != null:
-                    if (archType is null) throw new Exception("arch_type is null");
-                    await OnForceRead(deviceName, archType, data["params"]!);
-                    message = "So`rov qabul qilindi. Birozdan so`ng ma'lumotlar o`qib jo`natiladi";
-                    break;
-                case "READ_DEVICE" when OnReadData != null:
-                case "READ_DATA" when OnReadData != null:
-                    resultData = await OnReadData(deviceName, data["params"]!);
-                    message = "So`rov qabul qilindi. Birozdan so`ng ma'lumotlar o`qib jo`natiladi";
-                    break;
-                case "WRITE_DEVICE" when OnWriteData != null:
-                case "WRITE_DATA" when OnWriteData != null:
-                    resultData = await OnWriteData(deviceName, data["params"]!);
-                    message = "So`rov qabul qilindi.";
-                    break;
-                default:
-                    return;
-            }
+            Transport = RpcTransport.GatewayDevice,
+            Method = data["method"]?.GetValue<string>()?.ToUpperInvariant() ?? string.Empty,
+            Params = data["params"] as JsonObject ?? [],
+            ResponseTopic = topic,
+            TransportDeviceName = content["device"]?.GetValue<string>()
+                                  ?? throw new Exception("Qurilma nomi berilmagan"),
+            RequestId = data["id"]?.GetValue<int>() ?? throw new Exception("id berilmagan")
+        };
 
-            result["success"] = success;
-            result["message"] = message;
-            result["data"] = resultData ?? new();
-
-            var res = new
-            {
-                device = deviceName,
-                id = requestId,
-                data = result,
-            };
-            await EnqueueAsync(topic, JsonSerializer.Serialize(res));
-        }
-        catch (Exception ex)
-        {
-            success = false;
-            message = $"Error on RPC method ({method}): {ex.Message}";
-            _logger?.LogError(ex, "{message}", message);
-
-            result["success"] = success;
-            result["message"] = message;
-            var res = new
-            {
-                device = deviceName,
-                id = requestId,
-                data = result,
-            };
-            await EnqueueAsync(topic, JsonSerializer.Serialize(res));
-        }
+        await HandleRpcAsync(request);
     }
 
     private static readonly JsonSerializerOptions AttributeResponseJsonOptions = new()
@@ -152,90 +102,136 @@ public partial class GatewayClient
 
         return Task.CompletedTask;
     }
-    
+
     /// <summary>
-    /// RPC handler for the Thingsboard Gateway
+    /// v1/devices/me/rpc/request/{id} — gateway qurilmasining o'ziga yo'naltirilgan RPC.
+    /// Gateway ulangan bo'lsa doim ishlaydi.
     /// </summary>
-    /// <param name="topic"></param>
-    /// <param name="msg"></param>
-    /// <returns></returns>
-    /// <exception cref="NullReferenceException"></exception>
     private async Task RpcHandlerAsync(string topic, byte[] msg)
     {
         var requestId = topic[DEVICE_RPC_REQUEST_TOPIC.Length..];
-        var responseTopic = DEVICE_RPC_RESPONSE_TOPIC + requestId;
 
         var node = JsonNode.Parse(msg);
         _logger?.LogInformation("GATEWAY RPC -> Topic: {Topic}, Message: {Msg}", topic, node?.ToJsonString());
 
-        var method = node!["method"]?.GetValue<string>().ToUpper();
-        string message;
-        string? customMessage = null;
+        var request = new RpcRequest
+        {
+            Transport = RpcTransport.SelfDevice,
+            Method = node?["method"]?.GetValue<string>()?.ToUpperInvariant() ?? string.Empty,
+            // "as JsonObject": TB ba'zi ichki so'rovlarda (gateway_ping) params ni
+            // obyekt emas, satr qilib jo'natadi ("params":"{}")
+            Params = node?["params"] as JsonObject ?? [],
+            ResponseTopic = DEVICE_RPC_RESPONSE_TOPIC + requestId
+        };
+
+        await HandleRpcAsync(request);
+    }
+
+    /// <summary>
+    /// Ikkala transport uchun umumiy oqim: bajarish, xatoni ushlash, javobni yozish.
+    /// </summary>
+    private async Task HandleRpcAsync(RpcRequest request)
+    {
+        RpcResult result;
         try
         {
-            // "as JsonObject": ThingsBoard ba'zi ichki RPC so'rovlarida (masalan, gateway_ping)
-            // "params" ni JSON obyekt emas, satr sifatida jo'natadi ("params":"{}"). Node
-            // indekseri ([...]) bunday holatda AsObject() ichida yiqiladi, shuning uchun
-            // xavfsiz cast ishlatiladi — mos kelmasa shunchaki null qaytadi.
-            var paramsObj = node["params"] as JsonObject;
-            switch (method)
-            {
-                case "GATEWAY_PING":
-                    await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(new {success = true, message = "pong" }));
-                    break;
-                case "STATUS_GATEWAY":
-                case "GATEWAY_STATS":
-                    await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(GatewayInfo));
-                    break;
-                case "GATEWAY_VERSION":
-                    await _mqttClient.PublishAsync(responseTopic, JsonSerializer.Serialize(new { version = GatewayVersion() }));
-                    break;
-                case "NEW_DEVICE" when OnNewDevice != null:
-                    customMessage = await NewDeviceHandler(node);
-                    break;
-                case "ENABLE_DEVICE" when OnSetEnabled != null:
-                    await ControlDeviceHandler(node);
-                    break;
-                case "RENAME_DEVICE" when OnRenameDevice != null:
-                    await RenameDeviceHandler(node);
-                    break;
-                case "DELETE_DEVICE" when OnDeleteDevice != null:
-                    await DeleteDeviceHandler(node);
-                    break;
-                case "READ_DEVICE" when OnReadData != null:
-                    _ = await OnReadData(
-                        paramsObj?["deviceName"]?.GetValue<string>() ?? paramsObj?["name"]?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
-                        paramsObj?["settings"] ?? throw new NullReferenceException("settings berilmagan"));
-                    break;
-                case "WRITE_DEVICE" when OnWriteData != null:
-                    _ = await OnWriteData(
-                        paramsObj?["deviceName"]?.GetValue<string>() ?? paramsObj?["name"]?.GetValue<string>() ?? throw new NullReferenceException("deviceName berilamagan"),
-                        paramsObj?["settings"] ?? throw new NullReferenceException("settings berilmagan"));
-                    break;
-                default:
-                    return;
-            }
+            var executed = await ExecuteRpcAsync(request);
 
-            message = customMessage ?? "So`rovingiz muvaffaqiyatli bajarildi";
+            // Tanilmagan metod yoki ulanmagan handler — TB javob kutmaydi
+            if (executed is null) return;
 
-            var res = new
-            {
-                success = true,
-                message
-            };
-            await EnqueueAsync(responseTopic, JsonSerializer.Serialize(res));
+            result = executed.Value;
         }
         catch (Exception ex)
         {
-            message = $"Error on RPC method ({method}): {ex.Message}";
+            var message = $"Error on RPC method ({request.Method}): {ex.Message}";
             _logger?.LogError(ex, "{message}", message);
+            result = RpcResult.Fail(message);
+        }
 
-            var res = new
-            {
-                success = false,
-                message
-            };
-            await EnqueueAsync(responseTopic, JsonSerializer.Serialize(res));
+        await EnqueueAsync(request.ResponseTopic, JsonSerializer.Serialize(BuildRpcResponse(request, result)));
+    }
+
+    /// <summary>
+    /// Javob tanasi ikkala transportda bir xil; gateway yo'lida u qo'shimcha
+    /// {device, id, data} konvertiga o'raladi.
+    /// </summary>
+    private static object BuildRpcResponse(RpcRequest request, RpcResult result)
+    {
+        var body = result.RawBody
+                   ?? new { success = result.Success, message = result.Message, data = result.Data };
+
+        return request.Transport == RpcTransport.GatewayDevice
+            ? new { device = request.TransportDeviceName, id = request.RequestId, data = body }
+            : body;
+    }
+
+    /// <summary>
+    /// Yagona metod dispatcher'i — barcha metodlar ikkala transportda ham ochiq.
+    /// <c>null</c> qaytarilsa javob yuborilmaydi.
+    /// </summary>
+    private async Task<RpcResult?> ExecuteRpcAsync(RpcRequest request)
+    {
+        switch (request.Method)
+        {
+            // Gateway-boshqaruv metodlari: TB widget'i aniq shaklni kutadi
+            case "GATEWAY_PING":
+                return RpcResult.Raw(new { success = true, message = "pong" });
+
+            case "STATUS_GATEWAY":
+            case "GATEWAY_STATS":
+                return RpcResult.Raw(GatewayInfo);
+
+            case "GATEWAY_VERSION":
+                return RpcResult.Raw(new { version = GatewayVersion() });
+
+            case "NEW_DEVICE" when OnNewDevice != null:
+                return RpcResult.Ok(await OnNewDevice(this, request.DeviceName, request.Params));
+
+            case "ENABLE_DEVICE" when OnSetEnabled != null:
+                await OnSetEnabled(
+                    request.DeviceName,
+                    request.Params["enabled"]?.GetValue<bool>()
+                        ?? throw new Exception("'enabled' parametri berilmagan"));
+                return RpcResult.Ok();
+
+            case "RENAME_DEVICE" when OnRenameDevice != null:
+                return RpcResult.Ok(await OnRenameDevice(
+                    request.DeviceName,
+                    request.Params["newName"]?.GetValue<string>()
+                        ?? throw new Exception("Yangi nom berilmagan")));
+
+            case "DELETE_DEVICE" when OnDeleteDevice != null:
+                return RpcResult.Ok(await OnDeleteDevice(request.DeviceName));
+
+            case "SET_DEVICE_INFO" when OnSetDeviceInfo != null:
+                return RpcResult.Ok(
+                    await OnSetDeviceInfo(request.DeviceName, request.Params)
+                    ?? "Ma'lumotlar o'zgartirildi");
+
+            case "GET_DEVICE_INFO" when OnGetDeviceInfo != null:
+                return RpcResult.Ok(data: await OnGetDeviceInfo(request.DeviceName));
+
+            case "FORCE_READ" when OnForceRead != null:
+                var archType = request.Params["arch_type"]?.GetValue<string>()?.ToUpperInvariant()
+                               ?? throw new Exception("arch_type is null");
+                await OnForceRead(request.DeviceName, archType, request.Payload);
+                return RpcResult.Ok("So`rov qabul qilindi. Birozdan so`ng ma'lumotlar o`qib jo`natiladi");
+
+            case "READ_DEVICE" when OnReadData != null:
+            case "READ_DATA" when OnReadData != null:
+                return RpcResult.Ok(
+                    "So`rov qabul qilindi. Birozdan so`ng ma'lumotlar o`qib jo`natiladi",
+                    await OnReadData(request.DeviceName, request.Payload));
+
+            case "WRITE_DEVICE" when OnWriteData != null:
+            case "WRITE_DATA" when OnWriteData != null:
+                return RpcResult.Ok(
+                    "So`rov qabul qilindi.",
+                    await OnWriteData(request.DeviceName, request.Payload));
+
+            default:
+                return null;
         }
     }
 
@@ -247,53 +243,4 @@ public partial class GatewayClient
                                        .FirstOrDefault();
         return versionAttribute?.InformationalVersion ?? "unknown";
     }
-
-    private Task<string?> NewDeviceHandler(JsonNode node)
-    {
-        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param["deviceName"] ?? param["name"] ?? throw new Exception("Qurilma nomi berilmagan");
-
-        if (OnNewDevice != null)
-        {
-            return OnNewDevice(this, deviceName.GetValue<string>(), param);
-        }
-        return Task.FromResult<string?>(null);
-    }
-
-    private Task ControlDeviceHandler(JsonNode node)
-    {
-        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
-        var enabled = param["enabled"]?.GetValue<bool>() ?? throw new Exception("'enabled' parametri berilmagan");
-
-        if (OnSetEnabled != null)
-        {
-            return OnSetEnabled(deviceName, enabled);
-        }
-        return Task.CompletedTask;
-    }
-
-    private Task RenameDeviceHandler(JsonNode node)
-    {
-        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
-        var newName = param["newName"]?.GetValue<string>() ?? throw new Exception("Yangi nom berilmagan");
-        if (OnRenameDevice != null)
-        {
-            return OnRenameDevice(deviceName, newName);
-        }
-        return Task.CompletedTask;
-    }
-
-    private Task DeleteDeviceHandler(JsonNode node)
-    {
-        var param = node["params"] as JsonObject ?? throw new Exception("Parametrlar berilmadi");
-        var deviceName = param["deviceName"]?.GetValue<string>() ?? throw new Exception("Qurilma nomi berilmagan");
-        if (OnDeleteDevice != null)
-        {
-            return OnDeleteDevice(deviceName);
-        }
-        return Task.CompletedTask;
-    }
-
 }
